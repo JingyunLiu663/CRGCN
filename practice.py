@@ -19,6 +19,7 @@ class GraphEncoder(nn.Module):
             x = self.gnn_layers[i](x=x, edge_index=edge_index)
         return x
 
+
 class CRGCN(nn.Module):
     def __init__(self, args, dataset: DataSet):
         super(CRGCN, self).__init__()
@@ -52,3 +53,24 @@ class CRGCN(nn.Module):
         self.apply(self._init_weights)
 
         self._load_model()
+
+    def forward(self, batch_data):
+        self.storage_all_embeddings = None
+
+        all_embeddings = self.gcn_propagate()
+        total_loss = 0
+        for index, behavior in enumerate(self.behaviors):
+            data = batch_data[:, index]
+            users = data[:, 0].long()
+            items = data[:, 1:].long()
+            user_all_embedding, item_all_embedding = torch.split(all_embeddings[behavior], [self.n_users + 1, self.n_items + 1])
+
+            user_feature = user_all_embedding[users.view(-1, 1)].expand(-1, items.shape[1], -1)
+            item_feature = item_all_embedding[items]
+            # user_feature, item_feature = self.message_dropout(user_feature), self.message_dropout(item_feature)
+
+            scores = torch.sum(user_feature * item_feature, dim=2)
+            total_loss += self.bpr_loss(scores[:, 0], scores[:, 1])
+        total_loss = total_loss + self.reg_weight * self.emb_loss(self.user_embedding.weight, self.item_embedding.weight)
+
+        return total_loss
